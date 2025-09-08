@@ -2,17 +2,17 @@ name: Build Windows EXE
 
 on:
   push:
-    branches: [ "main" ]          # รันอัตโนมัติเมื่อมี commit เข้าสาขา main
-    tags: [ "v*" ]                # ถ้าพุช tag ขึ้นต้นด้วย v (เช่น v1.0.0) จะปล่อย Release ให้ด้วย
-  workflow_dispatch:              # รันด้วยมือได้จากแท็บ Actions
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  workflow_dispatch:
 
 permissions:
-  contents: write                 # ให้สิทธิ์สร้าง Release ตอนติดแท็ก
+  contents: write
 
 env:
   PYTHON_VERSION: "3.11"
-  APP_NAME: "DawsonDIY-Stock"     # ชื่อไฟล์ .exe ที่จะได้
-  MAIN_SCRIPT: "stock_cost_scanner.py"  # ชื่อไฟล์สคริปต์หลักของคุณ
+  APP_NAME: "DawsonDIY-Stock"
+  MAIN_SCRIPT: "stock_cost_scanner.py"   # ← ชื่อตรงกับไฟล์ที่คุณอัปโหลด
 
 jobs:
   build-windows:
@@ -39,12 +39,9 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          if (Test-Path "requirements.txt") {
-            pip install -r requirements.txt
-          }
+          if (Test-Path "requirements.txt") { pip install -r requirements.txt }
           pip install pyinstaller
 
-      # ทำ argument ไอคอนอัตโนมัติ ถ้ามี assets/app.ico
       - name: Detect optional icon
         shell: pwsh
         run: |
@@ -54,13 +51,7 @@ jobs:
 
       - name: Build EXE (onefile, no console)
         shell: pwsh
-        run: |
-          pyinstaller --noconsole --onefile `
-            --name "${{ env.APP_NAME }}" `
-            $env:ICON_ARG `
-            --hidden-import=barcode `
-            --hidden-import=barcode.code128 `
-            "${{ env.MAIN_SCRIPT }}"
+        run: pyinstaller --noconsole --onefile --name "${{ env.APP_NAME }}" $env:ICON_ARG --hidden-import=barcode --hidden-import=barcode.code128 "${{ env.MAIN_SCRIPT }}"
 
       - name: Verify build outputs
         shell: pwsh
@@ -76,7 +67,6 @@ jobs:
           name: ${{ env.APP_NAME }}-win
           path: dist/*
 
-      # สร้าง GitHub Release และแนบไฟล์ .exe เมื่อพุช tag ขึ้นต้นด้วย v*
       - name: Create GitHub Release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
