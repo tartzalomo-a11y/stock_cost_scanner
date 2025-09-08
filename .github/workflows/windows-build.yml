@@ -2,17 +2,17 @@ name: Build Windows EXE
 
 on:
   push:
-    branches: [ "main" ]
-    tags: [ "v*" ]
-  workflow_dispatch:
+    branches: [ "main" ]          # รันอัตโนมัติเมื่อมี commit เข้า main
+    tags: [ "v*" ]                # ถ้าพุชแท็กขึ้นต้นด้วย v (เช่น v1.0.0) จะสร้าง Release ให้ด้วย
+  workflow_dispatch:              # สั่งรันด้วยมือได้จากแท็บ Actions
 
 permissions:
-  contents: write
+  contents: write                 # ใช้สำหรับสร้าง Release เมื่อมีแท็ก
 
 env:
   PYTHON_VERSION: "3.11"
-  APP_NAME: "DawsonDIY-Stock"
-  MAIN_SCRIPT: "stock_cost_scanner.py"   # ← ชื่อตรงกับไฟล์ที่คุณอัปโหลด
+  APP_NAME: "DawsonDIY-Stock"         # ชื่อไฟล์ .exe ที่จะได้
+  MAIN_SCRIPT: "stock_cost_scanner.py" # ← ชื่อตรงกับไฟล์ที่คุณอัปโหลด
 
 jobs:
   build-windows:
@@ -39,9 +39,12 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          if (Test-Path "requirements.txt") { pip install -r requirements.txt }
+          if (Test-Path "requirements.txt") {
+            pip install -r requirements.txt
+          }
           pip install pyinstaller
 
+      # ถ้ามี assets/app.ico จะใส่ไอคอนให้อัตโนมัติ
       - name: Detect optional icon
         shell: pwsh
         run: |
@@ -49,9 +52,10 @@ jobs:
           if (Test-Path "assets/app.ico") { $IconArg = "--icon assets/app.ico" }
           "ICON_ARG=$IconArg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      # ใช้ "บรรทัดเดียว" เพื่อกันปัญหา backtick ทำงานผิด
       - name: Build EXE (onefile, no console)
         shell: pwsh
-        run: pyinstaller --noconsole --onefile --name "${{ env.APP_NAME }}" $env:ICON_ARG --hidden-import=barcode --hidden-import=barcode.code128 "${{ env.MAIN_SCRIPT }}"
+        run: pyinstaller --noconsole --onefile --clean -y --name "${{ env.APP_NAME }}" $env:ICON_ARG --hidden-import=barcode --hidden-import=barcode.code128 --collect-all barcode --collect-all PIL "${{ env.MAIN_SCRIPT }}"
 
       - name: Verify build outputs
         shell: pwsh
@@ -67,6 +71,7 @@ jobs:
           name: ${{ env.APP_NAME }}-win
           path: dist/*
 
+      # สร้าง Release และแนบ .exe เมื่อพุชแท็ก v*
       - name: Create GitHub Release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
