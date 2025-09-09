@@ -105,13 +105,9 @@ class App(tk.Tk):
         style.configure("TCheckbutton", background="#c0c0c0", foreground="black")
         style.configure("TEntry", fieldbackground="white", foreground="black")
 
-        # Auto-Scan toggle
-        self.auto_scan = tk.BooleanVar(value=True)
-
         self.auto_scan = tk.BooleanVar(value=True)
 
         self._load_settings()
-        self._scan_debounce_id = None
         self._build_toolbar()
         self._build_table()
         self._build_scan_panel()
@@ -145,31 +141,6 @@ class App(tk.Tk):
                 json.dump(self.settings, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
-
-    # ---------- Auto-Scan Helpers ----------
-    def _on_scan_var_write(self):
-        # Debounce rapid key events from barcode scanner
-        if not getattr(self, 'auto_scan', tk.BooleanVar(value=True)).get():
-            return
-        # cancel pending timer
-        if getattr(self, '_scan_debounce_id', None):
-            try:
-                self.after_cancel(self._scan_debounce_id)
-            except Exception:
-                pass
-        # schedule a short delay; if input stays stable, fire scan
-        self._scan_debounce_id = self.after(150, self._auto_scan_fire)
-
-    def _auto_scan_fire(self):
-        try:
-            data = self.scan_var.get().strip()
-        except Exception:
-            data = self.scan_entry.get().strip()
-        if not data:
-            return
-        # simple heuristic: treat as scan if length >= 4
-        if len(data) >= 4:
-            self.process_scan_and_save()
 
 # ---------- UI ----------
     def _build_toolbar(self):
@@ -208,15 +179,9 @@ class App(tk.Tk):
         pane.pack(side=tk.TOP, fill=tk.X)
         ttk.Checkbutton(pane, text="Auto-Scan", variable=self.auto_scan, command=self._maybe_focus_scan).pack(side=tk.LEFT, padx=2)
         ttk.Label(pane, text="ช่องสแกน:").pack(side=tk.LEFT, padx=6)
-        self.scan_var = tk.StringVar()
-        self.scan_entry = ttk.Entry(pane, width=40, textvariable=self.scan_var)
+        self.scan_entry = ttk.Entry(pane, width=40)
         self.scan_entry.pack(side=tk.LEFT, padx=2)
         self.scan_entry.bind("<Return>", lambda e: self.process_scan_and_save())
-        # Auto-Scan: trigger when input stops changing briefly
-        try:
-            self.scan_var.trace_add("write", lambda *args: self._on_scan_var_write())
-        except Exception:
-            pass
         ttk.Button(pane, text="Scan", command=self.process_scan_and_save).pack(side=tk.LEFT, padx=6)
 
     def _build_statusbar(self):
@@ -383,35 +348,24 @@ class App(tk.Tk):
         data = self.scan_entry.get().strip()
         if not data:
             self._set_status("ไม่มีข้อมูลที่สแกน")
-            self.scan_var.set("")
             self._maybe_focus_scan()
             return
         barcode_idx = COLUMNS.index("Barcode")
         scan_idx = COLUMNS.index("Scan")
-        # ค้นหาแถวที่ barcode ตรงกับที่สแกน
+        matched = 0
         for iid in self.tree.get_children():
             values = list(self.tree.item(iid, "values"))
             if str(values[barcode_idx]).strip() == data:
-                # ถ้าเคยสแกนแล้ว ให้เตือนและไม่เขียนทับ
-                if str(values[scan_idx]).strip():
-                    messagebox.showwarning("แจ้งเตือน", "สแกนไปแล้ว")
-                    self._set_status(f"สแกนซ้ำ: {data}")
-                    self._maybe_focus_scan()
-                    return
-                # ใส่เวลาที่มนุษย์อ่านได้แทนคำว่า pass
-                ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                values[scan_idx] = ts
+                values[scan_idx] = "pass"
                 self.tree.item(iid, values=values)
-                self._set_status(f"สแกนสำเร็จ: {data} @ {ts}")
-                self.scan_var.set("")
-                self._maybe_focus_scan()
-                return
-        # ถ้าไม่พบบาร์โค้ดในตาราง
-        messagebox.showwarning("ไม่พบ", f"ไม่พบบาร์โค้ด: {data}")
-        self._set_status("ไม่พบบาร์โค้ดในตาราง")
-        self.scan_var.set("")
-        self._maybe_focus_scan()
-        return
+                matched += 1
+        if matched == 0:
+            self._set_status(f"ไม่พบ Barcode '{data}'")
+        else:
+            self._set_status(f"Scan = '{data}' → pass {matched} แถว")
+        self.scan_entry.delete(0, tk.END)
+        if self.auto_scan.get():
+            self.after(10, self._maybe_focus_scan)
 
     def process_scan_and_save(self):
         self.process_scan()
@@ -499,17 +453,15 @@ class App(tk.Tk):
 
         # Let user choose the output folder; cancel if none
         _default_dir = self._barcode_folder()
-        init_dir = getattr(self, "settings", {}).get("last_export_dir", _default_dir)
+        init_dir = self.settings.get("last_export_dir", _default_dir)
         chosen_dir = filedialog.askdirectory(title="เลือกโฟลเดอร์สำหรับบันทึกบาร์โค้ด", initialdir=init_dir)
         if not chosen_dir:
             self._set_status("ยกเลิกการส่งออกบาร์โค้ด")
             return
-        outdir = chosen_dirir
-        try:
-            self.settings["last_export_dir"] = outdir
-            self._save_settings()
-        except Exception:
-            pass
+        outdir = chosen_dir
+        # remember for next time
+        self.settings["last_export_dir"] = outdir
+        self._save_settings()
         count = 0
         for iid in targets:
             values = list(self.tree.item(iid, "values"))
@@ -537,7 +489,14 @@ class App(tk.Tk):
             pass
 
     def print_selected_barcodes(self):
-        outdir = self._barcode_folder()
+        # Let user choose the output folder; fallback to default if canceled
+        _default_dir = self._barcode_folder()
+        init_dir = self.settings.get("last_export_dir", _default_dir)
+        chosen_dir = filedialog.askdirectory(title="เลือกโฟลเดอร์สำหรับบันทึกบาร์โค้ด", initialdir=init_dir)
+        outdir = chosen_dir
+        # remember for next time
+        self.settings["last_export_dir"] = outdir
+        self._save_settings() if chosen_dir else _default_dir
         barcode_idx = COLUMNS.index("Barcode")
         targets = self.tree.selection()
         if not targets:
